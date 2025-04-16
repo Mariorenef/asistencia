@@ -16,19 +16,15 @@ export default function AsistenciaApp() {
     const [grupo, setGrupo] = useState('A1');
     const [grupoSeleccionado, setGrupoSeleccionado] = useState('A1');
     const [mensaje, setMensaje] = useState('');
-    const [fecha, setFecha] = useState(() => {
-        const hoy = new Date();
-        return hoy.toISOString().split('T')[0];
-    });
+    const [fecha, setFecha] = useState(() => new Date().toISOString().split('T')[0]);
     const [cargaMasiva, setCargaMasiva] = useState('');
     const [alumnoEditando, setAlumnoEditando] = useState<string | null>(null);
     const [nuevoNombre, setNuevoNombre] = useState('');
     const [nuevoGrupo, setNuevoGrupo] = useState('A1');
 
     useEffect(() => {
-        const unsub = onSnapshot(collection(db, "alumnos"), (snapshot) => {
-            const lista = snapshot.docs.map(doc => doc.data() as { nombre: string, grupo: string });
-            setAlumnos(lista);
+        const unsub = onSnapshot(collection(db, "alumnos"), snapshot => {
+            setAlumnos(snapshot.docs.map(doc => doc.data() as { nombre: string, grupo: string }));
         });
         return () => unsub();
     }, []);
@@ -39,9 +35,7 @@ export default function AsistenciaApp() {
             const asistenciasDelDia: Record<string, string> = {};
             snapshot.forEach(doc => {
                 const data = doc.data();
-                if (data.fecha === fecha) {
-                    asistenciasDelDia[data.alumno] = data.estado;
-                }
+                if (data.fecha === fecha) asistenciasDelDia[data.alumno] = data.estado;
             });
             setAsistencias(asistenciasDelDia);
             setTimeout(() => setLoading(false), 800);
@@ -51,29 +45,18 @@ export default function AsistenciaApp() {
 
     const marcar = async (nombre: string, estado: string) => {
         const snapshot = await getDocs(collection(db, "asistencias"));
-        const existing = snapshot.docs.find(
-            doc => doc.data().fecha === fecha && doc.data().alumno === nombre
-        );
+        const existente = snapshot.docs.find(doc => doc.data().fecha === fecha && doc.data().alumno === nombre);
 
-        if (existing) {
-            await deleteDoc(doc(db, "asistencias", existing.id));
-        }
+        if (existente) await deleteDoc(doc(db, "asistencias", existente.id));
 
-        await addDoc(collection(db, "asistencias"), {
-            fecha,
-            alumno: nombre,
-            estado
-        });
+        await addDoc(collection(db, "asistencias"), { fecha, alumno: nombre, estado });
 
-        setAsistencias(prev => ({
-            ...prev,
-            [nombre]: estado
-        }));
+        setAsistencias(prev => ({ ...prev, [nombre]: estado }));
     };
 
     const agregarAlumno = async () => {
         const nombre = nuevoAlumno.trim();
-        if (nombre && !alumnos.find(a => a.nombre === nombre)) {
+        if (nombre && !alumnos.some(a => a.nombre === nombre)) {
             await addDoc(collection(db, "alumnos"), { nombre, grupo });
             setNuevoAlumno('');
             setMensaje(`Alumno "${nombre}" agregado al grupo "${grupo}" ✅`);
@@ -83,15 +66,12 @@ export default function AsistenciaApp() {
 
     const cargarAlumnosMasivos = async () => {
         const lineas = cargaMasiva.split('\n');
-        for (let linea of lineas) {
+        await Promise.all(lineas.map(async linea => {
             const [nombre, grupo] = linea.split(',').map(p => p.trim());
-            if (nombre && grupo) {
-                const yaExiste = alumnos.some(a => a.nombre === nombre);
-                if (!yaExiste) {
-                    await addDoc(collection(db, "alumnos"), { nombre, grupo });
-                }
+            if (nombre && grupo && !alumnos.some(a => a.nombre === nombre)) {
+                await addDoc(collection(db, "alumnos"), { nombre, grupo });
             }
-        }
+        }));
         setCargaMasiva('');
         setMensaje("Carga masiva completada ✅");
         setTimeout(() => setMensaje(''), 3000);
@@ -100,9 +80,7 @@ export default function AsistenciaApp() {
     const eliminarAlumno = async (nombre: string) => {
         const snapshot = await getDocs(collection(db, "alumnos"));
         const docToDelete = snapshot.docs.find(doc => doc.data().nombre === nombre);
-        if (docToDelete) {
-            await deleteDoc(doc(db, "alumnos", docToDelete.id));
-        }
+        if (docToDelete) await deleteDoc(doc(db, "alumnos", docToDelete.id));
     };
 
     const editarAlumno = async () => {
@@ -119,28 +97,26 @@ export default function AsistenciaApp() {
     };
 
     const handleLogout = () => {
-        signOut(auth)
-            .then(() => {
-                setIsAuthenticated(false);
-            })
-            .catch((error) => {
-                console.error("Error al cerrar sesión:", error);
-            });
+        signOut(auth).then(() => setIsAuthenticated(false)).catch(console.error);
     };
 
-    if (loading) {
-        return (
-            <div className="login-container">
-                <p>Cargando datos... ⏳</p>
-            </div>
-        );
-    }
+    if (loading) return <div className="login-container"><p>Cargando datos... ⏳</p></div>;
 
-    if (!isAuthenticated) {
-        return <Login onLogin={() => setIsAuthenticated(true)} />;
-    }
+    if (!isAuthenticated) return <Login onLogin={() => setIsAuthenticated(true)} />;
 
     const alumnosDelGrupo = alumnos.filter(a => a.grupo === grupoSeleccionado);
+
+    const generarCSV = () => {
+        const csv = ['Nombre,Estado'];
+        alumnosDelGrupo.forEach(({ nombre }) => {
+            csv.push(`${nombre},${asistencias[nombre] || 'Sin marcar'}`);
+        });
+        const blob = new Blob([csv.join('\n')], { type: 'text/csv' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `asistencia-${fecha}.csv`;
+        link.click();
+    };
 
     return (
         <div className="app-container">
@@ -152,11 +128,7 @@ export default function AsistenciaApp() {
             <div className="fecha-input">
                 <label>
                     Fecha:
-                    <input
-                        type="date"
-                        value={fecha}
-                        onChange={(e) => setFecha(e.target.value)}
-                    />
+                    <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
                 </label>
             </div>
 
@@ -164,12 +136,9 @@ export default function AsistenciaApp() {
                 <label>
                     Filtrar nivel:
                     <select value={grupoSeleccionado} onChange={(e) => setGrupoSeleccionado(e.target.value)}>
-                        <option value="A1">A1 - Beginner</option>
-                        <option value="A2">A2 - Basic</option>
-                        <option value="B1">B1 - Pre-intermediate</option>
-                        <option value="B2">B2 - Intermediate</option>
-                        <option value="C1">C1 - Upper-intermediate</option>
-                        <option value="C2">C2 - Advanced</option>
+                        {["A1", "A2", "B1", "B2", "C1", "C2"].map(nivel => (
+                            <option key={nivel} value={nivel}>{nivel}</option>
+                        ))}
                     </select>
                 </label>
             </div>
@@ -185,12 +154,9 @@ export default function AsistenciaApp() {
                     placeholder="Nombre del alumno"
                 />
                 <select value={grupo} onChange={(e) => setGrupo(e.target.value)}>
-                    <option value="A1">A1 - Beginner</option>
-                    <option value="A2">A2 - Basic</option>
-                    <option value="B1">B1 - Pre-intermediate</option>
-                    <option value="B2">B2 - Intermediate</option>
-                    <option value="C1">C1 - Upper-intermediate</option>
-                    <option value="C2">C2 - Advanced</option>
+                    {["A1", "A2", "B1", "B2", "C1", "C2"].map(nivel => (
+                        <option key={nivel} value={nivel}>{nivel}</option>
+                    ))}
                 </select>
                 <button onClick={agregarAlumno}>Agregar</button>
             </div>
@@ -207,69 +173,46 @@ export default function AsistenciaApp() {
             </div>
 
             <div className="secciones-asistencia">
-                <div>
-                    <h3>✅ Presentes ({alumnosDelGrupo.filter(n => asistencias[n.nombre] === 'Presente').length})</h3>
-                    <ul className="lista-alumnos">
-                        {alumnosDelGrupo.filter(n => asistencias[n.nombre] === 'Presente').map(({ nombre }) => (
-                            <li key={nombre} className="alumno-item">
-                                <strong>{nombre}</strong>
-                                <div className="botones-asistencia">
-                                    <button className="presente activo" onClick={() => marcar(nombre, 'Presente')}>Presente</button>
-                                    <button className="ausente" onClick={() => marcar(nombre, 'Ausente')}>Ausente</button>
-                                    <button className="eliminar" onClick={() => eliminarAlumno(nombre)}>Eliminar</button>
-                                </div>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-
-                <div>
-                    <h3>❌ Ausentes ({alumnosDelGrupo.filter(n => asistencias[n.nombre] === 'Ausente').length})</h3>
-                    <ul className="lista-alumnos">
-                        {alumnosDelGrupo.filter(n => asistencias[n.nombre] === 'Ausente').map(({ nombre }) => (
-                            <li key={nombre} className="alumno-item">
-                                <strong>{nombre}</strong>
-                                <div className="botones-asistencia">
-                                    <button className="presente" onClick={() => marcar(nombre, 'Presente')}>Presente</button>
-                                    <button className="ausente activo" onClick={() => marcar(nombre, 'Ausente')}>Ausente</button>
-                                    <button className="eliminar" onClick={() => eliminarAlumno(nombre)}>Eliminar</button>
-                                </div>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-
-                <div>
-                    <h3>🟡 Sin marcar ({alumnosDelGrupo.filter(n => !asistencias[n.nombre]).length})</h3>
-                    <ul className="lista-alumnos">
-                        {alumnosDelGrupo.filter(n => !asistencias[n.nombre]).map(({ nombre }) => (
-                            <li key={nombre} className="alumno-item">
-                                <strong>{nombre}</strong>
-                                <div className="botones-asistencia">
-                                    <button className="presente" onClick={() => marcar(nombre, 'Presente')}>Presente</button>
-                                    <button className="ausente" onClick={() => marcar(nombre, 'Ausente')}>Ausente</button>
-                                    <button className="eliminar" onClick={() => eliminarAlumno(nombre)}>Eliminar</button>
-                                </div>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
+                {["Presente", "Ausente", "Sin marcar"].map(estado => (
+                    <div key={estado}>
+                        <h3>
+                            {estado === "Presente" && `✅ Presentes (${alumnosDelGrupo.filter(n => asistencias[n.nombre] === 'Presente').length})`}
+                            {estado === "Ausente" && `❌ Ausentes (${alumnosDelGrupo.filter(n => asistencias[n.nombre] === 'Ausente').length})`}
+                            {estado === "Sin marcar" && `🟡 Sin marcar (${alumnosDelGrupo.filter(n => !asistencias[n.nombre]).length})`}
+                        </h3>
+                        <ul className="lista-alumnos">
+                            {alumnosDelGrupo
+                                .filter(n => estado === "Sin marcar" ? !asistencias[n.nombre] : asistencias[n.nombre] === estado)
+                                .map(({ nombre, grupo }) => (
+                                    <li key={nombre} className="alumno-item">
+                                        <strong>{nombre}</strong>
+                                        <div className="botones-asistencia">
+                                            <button className={estado === "Presente" ? "presente activo" : "presente"} onClick={() => marcar(nombre, 'Presente')}>Presente</button>
+                                            <button className={estado === "Ausente" ? "ausente activo" : "ausente"} onClick={() => marcar(nombre, 'Ausente')}>Ausente</button>
+                                            <button className="eliminar" onClick={() => eliminarAlumno(nombre)}>Eliminar</button>
+                                            {alumnoEditando === nombre && (
+                                                <div className="editar-form">
+                                                    <input value={nuevoNombre} onChange={(e) => setNuevoNombre(e.target.value)} />
+                                                    <select value={nuevoGrupo} onChange={(e) => setNuevoGrupo(e.target.value)}>
+                                                        {["A1", "A2", "B1", "B2", "C1", "C2"].map(nivel => (
+                                                            <option key={nivel} value={nivel}>{nivel}</option>
+                                                        ))}
+                                                    </select>
+                                                    <button onClick={editarAlumno}>Guardar</button>
+                                                </div>
+                                            )}
+                                            <button onClick={() => { setAlumnoEditando(nombre); setNuevoNombre(nombre); setNuevoGrupo(grupo); }}>✏️</button>
+                                        </div>
+                                    </li>
+                                ))}
+                        </ul>
+                    </div>
+                ))}
             </div>
 
             <button
                 style={{ marginBottom: '20px', padding: '8px 12px', borderRadius: '6px', backgroundColor: '#1976d2', color: 'white', border: 'none' }}
-                onClick={() => {
-                    const csv = ['Nombre,Estado'];
-                    alumnosDelGrupo.forEach(({ nombre }) => {
-                        const estado = asistencias[nombre] || 'Sin marcar';
-                        csv.push(`${nombre},${estado}`);
-                    });
-                    const blob = new Blob([csv.join('\n')], { type: 'text/csv' });
-                    const link = document.createElement('a');
-                    link.href = URL.createObjectURL(blob);
-                    link.download = `asistencia-${fecha}.csv`;
-                    link.click();
-                }}
+                onClick={generarCSV}
             >
                 📥 Descargar resumen CSV
             </button>
